@@ -1,6 +1,6 @@
 {
   "name": "chalk-extension",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,5 +16,10 @@
   "devDependencies": {
     "wxt": "^0.19.0",
     "typescript": "^5.4.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.3": true,
+    "spawn-sync@1.0.15": true
   }
 }

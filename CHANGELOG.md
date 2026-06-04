@@ -7,6 +7,13 @@ Version numbers follow `major.minor.patch` — currently in pre-release (0.x).
 
 ---
 
+## [0.1.23] - 2026-06-03
+
+### Fixed
+- TypeScript dev setup: `env.d.ts` and explicit `module`/`moduleResolution` in `tsconfig.json` so `import.meta.env` resolves correctly before `wxt prepare` runs
+
+---
+
 ## [0.1.22] - 2026-05-06
 
 ### Fixed

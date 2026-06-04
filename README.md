@@ -69,4 +69,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Status
 
-Early alpha — v0.1.22, shared with a small group of testers.
+Early alpha — v0.1.23, shared with a small group of testers.
