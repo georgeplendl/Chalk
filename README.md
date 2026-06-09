@@ -36,7 +36,7 @@ Chalk is a Chrome extension that layers a shared drawing canvas over any website
 
 See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the full step-by-step guide.
 
-The latest build is in [`extension/releases/`](extension/releases/).
+The latest build is on **[GitHub Releases](https://github.com/georgeplendl/Chalk/releases/latest)** (recommended). Zips are also kept in [`extension/releases/`](extension/releases/) in the repo.
 
 ## Stack
 

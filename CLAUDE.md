@@ -44,8 +44,10 @@ CLAUDE.md                  # this file
 1. Bump version in **both** `extension/package.json` and `extension/wxt.config.ts`
 2. `cd extension && npm run zip`
 3. Copy `.output/chalk-extension-x.x.x-chrome.zip` → `extension/releases/`
-4. Commit and push
-5. Never reuse or overwrite a version number; never delete old release zips
+4. Update `CHANGELOG.md`, commit, and push
+5. GitHub Actions (`.github/workflows/sync-releases.yml`) automatically creates or updates the matching GitHub Release with the zip and changelog notes
+6. **First-time only:** run **Actions → Sync GitHub Releases → Run workflow → Backfill all releases** to publish every historical zip already in `extension/releases/`
+7. Never reuse or overwrite a version number; never delete old release zips
 
 ## Known design decisions
 

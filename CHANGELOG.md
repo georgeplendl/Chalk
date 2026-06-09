@@ -7,6 +7,14 @@ Version numbers follow `major.minor.patch` — currently in pre-release (0.x).
 
 ---
 
+## [Unreleased]
+
+### Added
+- GitHub Actions workflow (`.github/workflows/sync-releases.yml`) — automatically creates or updates a GitHub Release when a new zip is pushed to `extension/releases/`, with notes pulled from `CHANGELOG.md`
+- `scripts/extract-changelog.mjs` — helper used by the release workflow to extract version notes
+
+---
+
 ## [0.1.24] - 2026-06-09
 
 ### Added

@@ -6,7 +6,9 @@
 
 ## Step 1 — Get the file
 
-Download the latest zip from the [`extension/releases/`](extension/releases/) folder in this repo. Grab the file with the highest version number (e.g. `chalk-extension-0.1.2-chrome.zip`).
+Download the latest zip from **[GitHub Releases](https://github.com/georgeplendl/Chalk/releases/latest)** — click the `chalk-extension-x.x.x-chrome.zip` asset under the newest release.
+
+Alternatively, grab the highest-version zip from [`extension/releases/`](extension/releases/) in this repo (e.g. `chalk-extension-0.1.24-chrome.zip`).
 
 ## Step 2 — Unzip
 

@@ -1,0 +1,97 @@
+name: Sync GitHub Releases
+
+# Creates or updates a GitHub Release whenever a new extension zip lands in
+# extension/releases/. Run "Backfill all releases" once to publish historical zips.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extension/releases/*.zip'
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: Create GitHub releases for every zip in extension/releases/
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Collect release zips
+        id: collect
+        run: |
+          set -euo pipefail
+          list=/tmp/release-zips.txt
+          : > "$list"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.backfill }}" = "true" ]; then
+            ls extension/releases/chalk-extension-*-chrome.zip | sort -V >> "$list"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            before="${{ github.event.before }}"
+            if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              ls extension/releases/chalk-extension-*-chrome.zip | sort -V | tail -1 >> "$list"
+            else
+              git diff --name-only "$before" "${{ github.sha }}" -- 'extension/releases/*.zip' >> "$list" || true
+            fi
+          fi
+
+          if [ ! -s "$list" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No release zips to sync."
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Zips to sync:"
+          cat "$list"
+
+      - name: Create or update GitHub releases
+        if: steps.collect.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r zip; do
+            [ -z "$zip" ] && continue
+            [ ! -f "$zip" ] && continue
+
+            version=$(basename "$zip" | sed -E 's/chalk-extension-(.+)-chrome\.zip/\1/')
+            tag="v${version}"
+            notes_file=$(mktemp)
+            node scripts/extract-changelog.mjs "$version" > "$notes_file"
+
+            # Prefer the commit that originally added this zip (accurate for backfill).
+            target=$(git log --diff-filter=A --format=%H -1 -- "$zip" || true)
+            if [ -z "$target" ]; then
+              target="${{ github.sha }}"
+            fi
+
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Updating release $tag"
+              gh release edit "$tag" --notes-file "$notes_file"
+              gh release upload "$tag" "$zip" --clobber
+            else
+              echo "Creating release $tag (target ${target:0:7})"
+              gh release create "$tag" "$zip" \
+                --title "Chalk v${version}" \
+                --notes-file "$notes_file" \
+                --target "$target"
+            fi
+
+            rm -f "$notes_file"
+          done < /tmp/release-zips.txt
