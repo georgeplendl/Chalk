@@ -1,6 +1,14 @@
 import { normalizeUrl } from '../../lib/url';
 import { getOrCreateSessionToken } from '../../lib/session';
 import { fetchAnnotations, saveAnnotation, type AnnotationRow } from '../../lib/annotations';
+import {
+  buildAnchor,
+  findAnchorElement,
+  getDocumentRect,
+  parseAnchor,
+  resolveAnchor,
+  type AnnotationAnchor,
+} from '../../lib/anchor';
 
 type FabricModule = typeof import('fabric');
 
@@ -20,7 +28,8 @@ export default defineContentScript({
     let loadedRows: AnnotationRow[] = [];
     let annotationCount = 0;
     let isEditingText = false;
-    let resizeTimer: ReturnType<typeof setTimeout>;
+    let isPointerDown = false;
+    let relayoutTimer: ReturnType<typeof setTimeout>;
     let currentColor = COLORS[0];
     let currentSize: number = 4;
     let currentTool: 'draw' | 'text' | 'none' = 'draw';
@@ -180,13 +189,18 @@ export default defineContentScript({
 
     // --- Annotation data helpers ---
 
-    // Wraps Fabric.js JSON with the canvas dimensions it was drawn at,
-    // so we can scale correctly when the viewport differs on load.
-    function wrapWithDimensions(fabricJson: Record<string, unknown>): Record<string, unknown> {
+    // Wraps Fabric.js JSON with the canvas dimensions it was drawn at (used by
+    // the proportional-scaling fallback) and, when available, a DOM anchor so
+    // the annotation tracks the element it was drawn over.
+    function wrapWithDimensions(
+      fabricJson: Record<string, unknown>,
+      anchor: AnnotationAnchor | null,
+    ): Record<string, unknown> {
       return {
         fabricData: fabricJson,
         canvasWidth: canvas?.width ?? window.innerWidth,
         canvasHeight: canvas?.height ?? window.innerHeight,
+        ...(anchor ? { anchor } : {}),
       };
     }
 
@@ -196,10 +210,28 @@ export default defineContentScript({
           fabricData: data.fabricData as Record<string, unknown>,
           storedW: data.canvasWidth as number | null,
           storedH: data.canvasHeight as number | null,
+          anchor: parseAnchor(data.anchor),
         };
       }
       // Legacy format: no dimensions stored, render as-is
-      return { fabricData: data, storedW: null, storedH: null };
+      return { fabricData: data, storedW: null, storedH: null, anchor: null };
+    }
+
+    // Anchor for a freshly drawn Fabric object. The canvas sits at document
+    // (0,0), so Fabric coordinates are document coordinates.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function computeAnchor(obj: any): AnnotationAnchor | null {
+      try {
+        const b = obj.getBoundingRect();
+        const el = findAnchorElement(
+          { left: b.left, top: b.top, width: b.width, height: b.height },
+          containerEl,
+        );
+        if (!el) return null;
+        return buildAnchor(el, { left: obj.left ?? b.left, top: obj.top ?? b.top });
+      } catch {
+        return null;
+      }
     }
 
     // Scales Fabric.js serialized object proportionally to the current canvas size.
@@ -269,10 +301,11 @@ export default defineContentScript({
         const path = e.path;
         path.set({ selectable: false, evented: false, hasControls: false });
         canvas?.renderAll();
+        const anchor = computeAnchor(path);
         const token = await getOrCreateSessionToken();
         const row = await saveAnnotation({
           url: normalizeUrl(window.location.href),
-          data: wrapWithDimensions(path.toJSON() as Record<string, unknown>),
+          data: wrapWithDimensions(path.toJSON() as Record<string, unknown>, anchor),
           type: 'drawing',
           session_token: token,
         });
@@ -310,10 +343,11 @@ export default defineContentScript({
         if (content) {
           text.set({ selectable: false, evented: false, hasControls: false });
           canvas?.renderAll();
+          const anchor = computeAnchor(text);
           const token = await getOrCreateSessionToken();
           const row = await saveAnnotation({
             url: normalizeUrl(window.location.href),
-            data: wrapWithDimensions(text.toJSON() as Record<string, unknown>),
+            data: wrapWithDimensions(text.toJSON() as Record<string, unknown>, anchor),
             type: 'text',
             session_token: token,
           });
@@ -324,18 +358,57 @@ export default defineContentScript({
         }
       });
 
-      // On resize: resize the canvas and re-render stored annotations with new ratios
-      window.addEventListener('resize', () => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(async () => {
-          if (!containerEl || !canvas) return;
-          const { w: newW, h: newH } = getPageDimensions();
-          containerEl.style.width = `${newW}px`;
-          containerEl.style.height = `${newH}px`;
-          canvas.setDimensions({ width: newW, height: newH });
-          await renderAnnotations(loadedRows);
-        }, 250);
+      // Track mid-stroke state so relayout never clears a stroke in progress
+      canvas.on('mouse:down', () => { isPointerDown = true; });
+      canvas.on('mouse:up',   () => { isPointerDown = false; });
+
+      // Re-layout on viewport resize, page content growth (lazy load, infinite
+      // scroll), and DOM mutations (SPA re-renders) — anchored annotations
+      // follow their elements, the rest re-scale proportionally.
+      window.addEventListener('resize', () => scheduleRelayout(250));
+
+      // ResizeObserver fires once on observe() with the initial size — skip it
+      let lastBodySize = '';
+      new ResizeObserver((entries) => {
+        const rect = entries[entries.length - 1].contentRect;
+        const size = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
+        if (size === lastBodySize) return;
+        const isInitial = lastBodySize === '';
+        lastBodySize = size;
+        if (!isInitial) scheduleRelayout(250);
+      }).observe(document.body);
+
+      const isChalkNode = (n: Node) =>
+        n === containerEl || n === toolbarHostEl ||
+        (containerEl?.contains(n) ?? false) || (toolbarHostEl?.contains(n) ?? false);
+
+      const mutationObserver = new MutationObserver((mutations) => {
+        const relevant = mutations.some(m => {
+          if (isChalkNode(m.target)) return false;
+          // Ignore mutations that only add/remove Chalk's own elements
+          const nodes = [...m.addedNodes, ...m.removedNodes];
+          return nodes.length === 0 || nodes.some(n => !isChalkNode(n));
+        });
+        if (relevant) scheduleRelayout(500);
       });
+      mutationObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function scheduleRelayout(delay: number) {
+      clearTimeout(relayoutTimer);
+      relayoutTimer = setTimeout(async () => {
+        if (!containerEl || !canvas) return;
+        // Don't wipe the canvas mid-stroke or mid-text-edit — try again later
+        if (isPointerDown || isEditingText) {
+          scheduleRelayout(500);
+          return;
+        }
+        const { w: newW, h: newH } = getPageDimensions();
+        containerEl.style.width = `${newW}px`;
+        containerEl.style.height = `${newH}px`;
+        canvas.setDimensions({ width: newW, height: newH });
+        await renderAnnotations(loadedRows, { animate: false });
+      }, delay);
     }
 
     function applyBrush() {
@@ -358,17 +431,18 @@ export default defineContentScript({
       await renderAnnotations(loadedRows);
     }
 
-    async function renderAnnotations(rows: AnnotationRow[]) {
+    async function renderAnnotations(rows: AnnotationRow[], opts?: { animate?: boolean }) {
       if (!canvas || !fab) return;
+      const animate = opts?.animate ?? true;
       canvas.clear();
 
-      // Collect all objects first, added at opacity 0
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const objects: any[] = [];
       for (const row of rows) {
         const obj = await buildAnnotationObject(row);
         if (obj) {
-          obj.set({ opacity: 0, selectable: false, evented: false, hasControls: false, hasBorders: false });
+          // Re-layouts snap into place; initial load fades in from opacity 0
+          obj.set({ opacity: animate ? 0 : 1, selectable: false, evented: false, hasControls: false, hasBorders: false });
           canvas.add(obj);
           objects.push(obj);
         }
@@ -376,6 +450,7 @@ export default defineContentScript({
       canvas.renderAll();
       applyBrush();
 
+      if (!animate) return;
       // Stagger fade-in: 50ms apart, capped so even large sets feel snappy
       objects.forEach((obj, i) => {
         const delay = Math.min(i * 50, 500);
@@ -383,17 +458,48 @@ export default defineContentScript({
       });
     }
 
+    // Positions annotation data via its DOM anchor. Returns null when the
+    // anchor can't be resolved, in which case the caller falls back to
+    // proportional scaling.
+    function applyAnchorPosition(
+      data: Record<string, unknown>,
+      anchor: AnnotationAnchor,
+    ): Record<string, unknown> | null {
+      const el = resolveAnchor(anchor);
+      if (!el) return null;
+
+      const rect = getDocumentRect(el);
+      // Uniform scale from element width keeps shapes unskewed; clamped so a
+      // degenerate rect can't blow the annotation up or shrink it to nothing.
+      const rawScale = anchor.elemW > 0 ? rect.width / anchor.elemW : 1;
+      const scale = Math.min(Math.max(rawScale, 0.25), 4);
+
+      const d = { ...data };
+      d.left = rect.left + anchor.offsetX * scale;
+      d.top  = rect.top  + anchor.offsetY * scale;
+      if (typeof d.scaleX === 'number')   d.scaleX   = d.scaleX   * scale;
+      if (typeof d.scaleY === 'number')   d.scaleY   = d.scaleY   * scale;
+      if (typeof d.fontSize === 'number') d.fontSize = d.fontSize * scale;
+      return d;
+    }
+
     async function buildAnnotationObject(row: AnnotationRow) {
       if (!canvas || !fab) return null;
       try {
-        const { fabricData, storedW, storedH } = parseAnnotationData(row.data);
-        const currentW = canvas.width!;
-        const currentH = canvas.height!;
-        const ratioX = storedW ? currentW / storedW : 1;
-        const ratioY = storedH ? currentH / storedH : 1;
-        const scaled = scaleFabricData(fabricData, ratioX, ratioY);
+        const { fabricData, storedW, storedH, anchor } = parseAnnotationData(row.data);
+
+        let positioned = anchor ? applyAnchorPosition(fabricData, anchor) : null;
+        if (!positioned) {
+          // Fallback: proportional viewport scaling (also covers legacy rows)
+          const currentW = canvas.width!;
+          const currentH = canvas.height!;
+          const ratioX = storedW ? currentW / storedW : 1;
+          const ratioY = storedH ? currentH / storedH : 1;
+          positioned = scaleFabricData(fabricData, ratioX, ratioY);
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [obj] = (await fab.util.enlivenObjects([scaled as any])) as any[];
+        const [obj] = (await fab.util.enlivenObjects([positioned as any])) as any[];
         return obj ?? null;
       } catch (err) {
         console.warn('[Chalk] Could not load annotation:', err);

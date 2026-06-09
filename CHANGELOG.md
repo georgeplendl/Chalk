@@ -7,6 +7,18 @@ Version numbers follow `major.minor.patch` — currently in pre-release (0.x).
 
 ---
 
+## [0.1.24] - 2026-06-09
+
+### Added
+- DOM-anchored annotations — drawings and text now record the element they were drawn over (`lib/anchor.ts`: stable selector candidates, offset relative to the element's rect, element size at draw time, text hint for verification) and reposition with that element on viewport resize, responsive reflow, and SPA re-renders
+- Page layout observers — `ResizeObserver` on `document.body` catches lazy-load/infinite-scroll height changes; debounced `MutationObserver` catches SPA navigation; both funnel into a single `scheduleRelayout()` that skips re-rendering mid-stroke or mid-text-edit
+
+### Changed
+- Proportional viewport scaling is now the fallback path, used only when an annotation has no anchor (legacy rows) or its anchor element can't be resolved
+- Re-layouts snap annotations into place instantly; the staggered fade-in only plays on initial load
+
+---
+
 ## [0.1.23] - 2026-06-03
 
 ### Fixed

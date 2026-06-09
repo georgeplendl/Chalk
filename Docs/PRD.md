@@ -64,7 +64,7 @@ The goal of v0 is to validate one core loop: **install → draw on a page → so
 ### 5.3 Annotation Storage & Retrieval ✅
 - Annotations stored by canonical URL via Supabase REST API
 - Anyone visiting the same URL sees all annotations left by others
-- Page-relative coordinates with proportional scaling on viewport resize (no DOM anchoring yet)
+- DOM-anchored coordinates — annotations track the element they were drawn over across viewport resizes, responsive reflows, and SPA re-renders; proportional viewport scaling remains as the fallback for unresolvable anchors and legacy data
 - Annotations fade in on load, fade out on close
 
 ### 5.4 Identity ✅
@@ -114,9 +114,9 @@ The full four-channel strategy for when v0 is proven and store risk becomes real
 - Basic shapes (arrow, circle, rectangle)
 - Opacity slider
 
-### 6.4 DOM-Anchored Annotations
-- Text annotations anchor to specific DOM elements rather than raw pixel coordinates — survives minor page reflows
-- Snapshot surrounding DOM context; warn if page changes significantly
+### 6.4 DOM-Anchored Annotations ✅ (shipped in v0)
+- ~~Annotations anchor to specific DOM elements rather than raw pixel coordinates — survives minor page reflows~~ Done for both drawings and text
+- Remaining: snapshot surrounding DOM context; warn if page changes significantly (Hypothesis-style fuzzy re-anchoring)
 
 ### 6.5 Social Layer
 - Upvote / downvote on any annotation

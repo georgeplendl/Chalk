@@ -22,6 +22,7 @@ extension/
     background.ts          # service worker — handles icon click, badge ON/OFF
     content/index.ts       # main content script — canvas, toolbar, load/save annotations
   lib/
+    anchor.ts              # DOM anchoring — selector generation/resolution for annotations
     annotations.ts         # Supabase fetch/save/report helpers
     session.ts             # anonymous session token (crypto.randomUUID, persisted)
     url.ts                 # URL normalization (strips UTM, www., trailing slash, fragment)
@@ -48,7 +49,9 @@ CLAUDE.md                  # this file
 
 ## Known design decisions
 
-- **Proportional coordinate scaling:** each annotation stores `canvasWidth`/`canvasHeight` at draw time; on load and resize, coordinates are scaled by ratio. `scaleX`/`scaleY`/`fontSize` scale by `ratioX` only (not `ratioY`) to prevent shape skewing.
+- **DOM-anchored annotations:** each annotation stores an `anchor` (CSS selector candidates for the element it was drawn over, offset relative to that element's rect, element size at draw time, and a text hint for verification). On load/resize/mutation, the element is re-resolved and the annotation repositions with it, scaling uniformly by the element's width ratio (clamped 0.25–4×). Selectors never use class names — CSS-module hashes and utility classes churn between deploys.
+- **Proportional scaling fallback:** annotations also store `canvasWidth`/`canvasHeight` at draw time; when an anchor is missing (legacy rows, iframes, canvas-rendered pages) or can't be resolved, coordinates scale by viewport ratio. `scaleX`/`scaleY`/`fontSize` scale by `ratioX` only (not `ratioY`) to prevent shape skewing.
+- **Single relayout path:** window `resize`, body `ResizeObserver`, and a debounced `MutationObserver` all call `scheduleRelayout()`, which defers while a stroke or text edit is in progress and re-renders without the fade-in stagger.
 - **Canvas-level text events:** use `canvas.on('text:editing:exited', ...)` not `text.on('editing:exited', ...)` — the object-level event is unreliable in Fabric.js v6.
 - **Shadow DOM toolbar:** the drawing toolbar uses Shadow DOM to prevent CSS conflicts with host pages.
 - **`action` key in manifest:** `wxt.config.ts` must include `action: { default_title: '...' }` or WXT omits the action key and `chrome.action.onClicked` never fires.

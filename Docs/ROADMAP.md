@@ -8,6 +8,7 @@ The core loop works: install → draw on a page → someone else installs → vi
 
 ## Recently completed
 
+- ✅ DOM-anchored annotations — drawings *and* text anchor to the element they were drawn over and reposition with it on resize/reflow/SPA re-renders; proportional scaling kept as fallback
 - ✅ Toolbar redesigned to match Figma — horizontal, bottom-center, frosted glass, Lucide icons
 - ✅ Chalk wordmark SVG logo in toolbar
 - ✅ Keyboard shortcuts: **P** (paintbrush), **T** (text), **Esc** (deactivate), **1–6** (colors)
@@ -57,9 +58,6 @@ Remove strokes from the canvas. Low-effort addition to the toolbar.
 ### Additional drawing tools
 - Basic shapes (arrow, circle, rectangle)
 - Opacity slider
-
-### DOM-anchored annotations
-Text annotations that anchor to specific DOM elements rather than raw pixel coordinates — survives minor page reflows.
 
 ### Identity & accounts
 - Optional username + persistent identity, no real name required
