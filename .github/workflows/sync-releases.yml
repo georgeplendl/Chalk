@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'extension/releases/*.zip'
+      - '.github/workflows/sync-releases.yml'
   workflow_dispatch:
     inputs:
       backfill:
@@ -38,7 +39,20 @@ jobs:
           list=/tmp/release-zips.txt
           : > "$list"
 
+          workflow_changed=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            before="${{ github.event.before }}"
+            if [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              if git diff --name-only "$before" "${{ github.sha }}" -- '.github/workflows/sync-releases.yml' | grep -q .; then
+                workflow_changed=true
+              fi
+            fi
+          fi
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.backfill }}" = "true" ]; then
+            ls extension/releases/chalk-extension-*-chrome.zip | sort -V >> "$list"
+          elif [ "$workflow_changed" = "true" ]; then
+            echo "Release workflow changed — backfilling all zips."
             ls extension/releases/chalk-extension-*-chrome.zip | sort -V >> "$list"
           elif [ "${{ github.event_name }}" = "push" ]; then
             before="${{ github.event.before }}"
