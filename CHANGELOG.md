@@ -9,9 +9,19 @@ Version numbers follow `major.minor.patch` — currently in pre-release (0.x).
 
 ## [Unreleased]
 
+---
+
+## [0.1.25] - 2026-06-09
+
 ### Added
 - GitHub Actions workflow (`.github/workflows/sync-releases.yml`) — automatically creates or updates a GitHub Release when a new zip is pushed to `extension/releases/`, with notes pulled from `CHANGELOG.md`
 - `scripts/extract-changelog.mjs` — helper used by the release workflow to extract version notes
+
+### Fixed
+- Consecutive fill strokes (lift mouse, change color, keep drawing) no longer anchor to different DOM elements and drift apart on resize — strokes anchor at pointer-down and reuse the previous stroke's anchor when on the same element or overlapping it
+
+### Changed
+- Drawing anchors prefer the stroke start point over bounding-box majority vote; bounding-box vote remains as fallback when the start point misses an element
 
 ---
 

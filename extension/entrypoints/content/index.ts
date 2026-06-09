@@ -3,11 +3,15 @@ import { getOrCreateSessionToken } from '../../lib/session';
 import { fetchAnnotations, saveAnnotation, type AnnotationRow } from '../../lib/annotations';
 import {
   buildAnchor,
+  boundsOverlap,
   findAnchorElement,
+  findAnchorElementAtPoint,
   getDocumentRect,
   parseAnchor,
   resolveAnchor,
+  reuseSessionAnchor,
   type AnnotationAnchor,
+  type DocumentRect,
 } from '../../lib/anchor';
 
 type FabricModule = typeof import('fabric');
@@ -30,6 +34,11 @@ export default defineContentScript({
     let isEditingText = false;
     let isPointerDown = false;
     let relayoutTimer: ReturnType<typeof setTimeout>;
+    /** Pointer position when the current stroke started (document coords). */
+    let strokeStartPoint: { x: number; y: number } | null = null;
+    /** Anchor + bounds from the most recently saved drawing stroke. */
+    let lastDrawAnchor: AnnotationAnchor | null = null;
+    let lastStrokeBounds: DocumentRect | null = null;
     let currentColor = COLORS[0];
     let currentSize: number = 4;
     let currentTool: 'draw' | 'text' | 'none' = 'draw';
@@ -121,6 +130,9 @@ export default defineContentScript({
 
     function deactivate() {
       isActive = false;
+      strokeStartPoint = null;
+      lastDrawAnchor = null;
+      lastStrokeBounds = null;
       // Exit any active text editing first so the save fires before we hide
       if (canvas) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -217,18 +229,45 @@ export default defineContentScript({
       return { fabricData: data, storedW: null, storedH: null, anchor: null };
     }
 
-    // Anchor for a freshly drawn Fabric object. The canvas sits at document
-    // (0,0), so Fabric coordinates are document coordinates.
+    // Anchor for a freshly drawn Fabric object. Prefer the stroke start point
+    // (where the user pressed down) over bounding-box voting. Consecutive
+    // strokes on the same element or overlapping a recent stroke reuse its
+    // anchor so fill layers stay aligned on resize.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    function computeAnchor(obj: any): AnnotationAnchor | null {
+    function computeAnchor(obj: any, startPoint?: { x: number; y: number } | null): AnnotationAnchor | null {
       try {
         const b = obj.getBoundingRect();
-        const el = findAnchorElement(
-          { left: b.left, top: b.top, width: b.width, height: b.height },
-          containerEl,
-        );
+        const bounds: DocumentRect = { left: b.left, top: b.top, width: b.width, height: b.height };
+        const position = { left: obj.left ?? b.left, top: obj.top ?? b.top };
+
+        let el: Element | null = null;
+        if (startPoint) {
+          el = findAnchorElementAtPoint(startPoint.x, startPoint.y, containerEl);
+        }
+        if (!el) {
+          el = findAnchorElement(bounds, containerEl);
+        }
         if (!el) return null;
-        return buildAnchor(el, { left: obj.left ?? b.left, top: obj.top ?? b.top });
+
+        // Session reuse: same element as last stroke, or overlapping recent fill
+        if (lastDrawAnchor && lastStrokeBounds) {
+          const sessionEl = resolveAnchor(lastDrawAnchor);
+          const sameElement = sessionEl !== null && el === sessionEl;
+          const overlapping = boundsOverlap(bounds, lastStrokeBounds);
+          if (sameElement || (overlapping && sessionEl)) {
+            const anchor = reuseSessionAnchor(lastDrawAnchor, sessionEl ?? el, position);
+            lastDrawAnchor = anchor;
+            lastStrokeBounds = bounds;
+            return anchor;
+          }
+        }
+
+        const anchor = buildAnchor(el, position);
+        if (anchor) {
+          lastDrawAnchor = anchor;
+          lastStrokeBounds = bounds;
+        }
+        return anchor;
       } catch {
         return null;
       }
@@ -301,7 +340,9 @@ export default defineContentScript({
         const path = e.path;
         path.set({ selectable: false, evented: false, hasControls: false });
         canvas?.renderAll();
-        const anchor = computeAnchor(path);
+        const start = strokeStartPoint;
+        strokeStartPoint = null;
+        const anchor = computeAnchor(path, start);
         const token = await getOrCreateSessionToken();
         const row = await saveAnnotation({
           url: normalizeUrl(window.location.href),
@@ -313,11 +354,21 @@ export default defineContentScript({
         annotationCount++;
       });
 
-      // Text placement
+      // Text placement + stroke-start tracking for draw tool
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       canvas.on('mouse:down', (e: any) => {
-        if (currentTool !== 'text' || isEditingText || !canvas || !fab) return;
+        if (!canvas) return;
+        isPointerDown = true;
+
+        if (currentTool === 'draw') {
+          const pointer = canvas.getPointer(e.e);
+          strokeStartPoint = { x: pointer.x, y: pointer.y };
+          return;
+        }
+
+        if (currentTool !== 'text' || isEditingText || !fab) return;
         const pointer = canvas.getPointer(e.e);
+        strokeStartPoint = { x: pointer.x, y: pointer.y };
         const text = new fab.IText('', {
           left: pointer.x,
           top: pointer.y,
@@ -343,7 +394,7 @@ export default defineContentScript({
         if (content) {
           text.set({ selectable: false, evented: false, hasControls: false });
           canvas?.renderAll();
-          const anchor = computeAnchor(text);
+          const anchor = computeAnchor(text, { x: text.left ?? 0, y: text.top ?? 0 });
           const token = await getOrCreateSessionToken();
           const row = await saveAnnotation({
             url: normalizeUrl(window.location.href),
@@ -358,9 +409,7 @@ export default defineContentScript({
         }
       });
 
-      // Track mid-stroke state so relayout never clears a stroke in progress
-      canvas.on('mouse:down', () => { isPointerDown = true; });
-      canvas.on('mouse:up',   () => { isPointerDown = false; });
+      canvas.on('mouse:up', () => { isPointerDown = false; });
 
       // Re-layout on viewport resize, page content growth (lazy load, infinite
       // scroll), and DOM mutations (SPA re-renders) — anchored annotations

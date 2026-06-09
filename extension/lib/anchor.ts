@@ -164,9 +164,14 @@ function isChalkElement(el: Element): boolean {
 
 /**
  * Element under a document-coordinate point, skipping Chalk's own overlay.
- * Returns null when the point is outside the viewport (elementsFromPoint only
- * sees rendered content) or no anchor-worthy element is found.
  */
+export function findAnchorElementAtPoint(
+  docX: number,
+  docY: number,
+  overlayEl: Element | null,
+): Element | null {
+  return elementAtPoint(docX, docY, overlayEl);
+}
 function elementAtPoint(docX: number, docY: number, overlayEl: Element | null): Element | null {
   const x = docX - window.scrollX;
   const y = docY - window.scrollY;
@@ -236,6 +241,36 @@ export function buildAnchor(
     elemW: rect.width,
     elemH: rect.height,
     textHint: getTextHint(el),
+  };
+}
+
+/** True when overlap area / smaller rect area >= minRatio. */
+export function boundsOverlap(a: DocumentRect, b: DocumentRect, minRatio = 0.3): boolean {
+  const overlapW = Math.max(0, Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left));
+  const overlapH = Math.max(0, Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top));
+  const overlapArea = overlapW * overlapH;
+  if (overlapArea <= 0) return false;
+  const smaller = Math.min(a.width * a.height, b.width * b.height);
+  return smaller > 0 && overlapArea / smaller >= minRatio;
+}
+
+/**
+ * Recompute offsets for a new annotation while keeping the session anchor's
+ * selectors and element size — keeps consecutive fill strokes on the same scale.
+ */
+export function reuseSessionAnchor(
+  session: AnnotationAnchor,
+  el: Element,
+  position: { left: number; top: number },
+): AnnotationAnchor {
+  const rect = getDocumentRect(el);
+  return {
+    selectors: session.selectors,
+    offsetX: position.left - rect.left,
+    offsetY: position.top - rect.top,
+    elemW: session.elemW,
+    elemH: session.elemH,
+    textHint: session.textHint,
   };
 }
 
